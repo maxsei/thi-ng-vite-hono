@@ -1,27 +1,20 @@
-// import { ApiType } from '../api'
-// import { hc } from 'hono/client'
 import { $replace } from "@thi.ng/rdom";
 import { reactive } from "@thi.ng/rstream";
 import { isNil } from "@thi.ng/checks";
+import { ApiType } from "../server/api";
+import { hc, ClientResponse } from "hono/client";
 
 const isErr = (v: any) => v instanceof Error;
 const onServer = () => typeof window === "undefined";
 
-const fetchThrow = async (
-	input: string | URL | Request,
-	init?: RequestInit,
-): Promise<Response | Error> => {
-	try {
-		const r = await fetch(input, init);
-		if (!r.ok) return new Error(await r.text());
-		return await r.json();
-	} catch (e) {
-		return e;
-	}
+const jsonRespOrErr = async <T extends Promise<Response>>(
+	r: T,
+): Error | ReturnType<Awaited<T>["json"]> => {
+	const rAw = await r;
+	return rAw.ok ? await rAw.json() : new Error(await rAw.text());
 };
 
-// const COUNT_URL = "http://localhost:3002/api/count";
-const COUNT_URL = "/api/count";
+const api = hc<ApiType>("/api");
 
 export const counter = () => {
 	if (onServer()) {
@@ -33,7 +26,10 @@ export const counter = () => {
 			console.log(v);
 		},
 	});
-	fetchThrow(COUNT_URL).then((v) => count.next(v));
+	api.count
+		.$get()
+		.then(jore)
+		.then((v) => count.next(v));
 
 	const comp = (v: number) => [
 		"div",
@@ -41,11 +37,18 @@ export const counter = () => {
 		[
 			"button",
 			{
-				onclick: () => {
-					count.next(count.deref() + 1);
-					fetchThrow(COUNT_URL, { method: "POST" }).then((v) =>
-						count.next(isErr() ? count.deref() - 1 : v),
-					);
+				onclick: async () => {
+					const next = count.deref() + 1;
+					count.next(next);
+					const v = await jsonRespOrErr(api.count.$post());
+					if (isErr(v)) {
+						console.error(v);
+						count.next(next - 1);
+						return;
+					}
+					if (v !== next) {
+						count.next(v);
+					}
 				},
 			},
 			"+",
